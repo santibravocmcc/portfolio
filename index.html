@@ -616,19 +616,18 @@ footer p{font-family:var(--mono);font-size:.65rem;color:var(--dim);letter-spacin
 
   function inBoundsY(y){return y>=h*topFrac && y<=h-8;}
 
-  function SeaCreature(type){
-    this.type=type; // 'fish' | 'shark'
+  function SeaCreature(){
     this.x=rand(0,w);
     this.y=rand(h*topFrac+10,h-10);
     this.vx=rand(-.6,.6);
     this.vy=rand(-.25,.25);
     this.heading=rand(-Math.PI,Math.PI);
     this.turnPhase=rand(0,Math.PI*2);
-    this.speed=type==='shark'?rand(.35,.55):rand(.55,.95);
-    this.size=type==='shark'?rand(22,34):rand(8,14);
-    this.wiggle=type==='shark'?rand(.06,.12):rand(.12,.22);
-    this.sepRadius=type==='shark'?this.size*1.2:this.size*1.8;
-    this.opacity=type==='shark'?rand(.08,.14):rand(.07,.12);
+    this.speed=rand(.55,.95);
+    this.size=rand(8,14);
+    this.wiggle=rand(.12,.22);
+    this.sepRadius=this.size*1.8;
+    this.opacity=rand(.07,.12);
     this.hueMix=rand(0,1);
   }
 
@@ -680,56 +679,25 @@ footer p{font-family:var(--mono);font-size:.65rem;color:var(--dim);letter-spacin
     ctx.restore();
   }
 
-  function drawShark(c){
-    ctx.save();
-    ctx.translate(c.x,c.y);
-    ctx.rotate(c.heading);
-    ctx.globalCompositeOperation='lighter';
-    ctx.fillStyle=colorFor(c);
-
-    var s=c.size;
-    var bodyLen=s*2.4;
-    var bodyH=s*0.7;
-    var tail=s*0.95;
-    var wig=Math.sin(c.turnPhase)*s*0.07;
-
-    ctx.beginPath();
-    ctx.moveTo(-bodyLen*0.6,0);
-    ctx.quadraticCurveTo(-bodyLen*0.1,-bodyH+wig,bodyLen*0.5,0);
-    ctx.quadraticCurveTo(-bodyLen*0.1,bodyH+wig,-bodyLen*0.6,0);
-    ctx.closePath();
-    ctx.fill();
-
-    // tail
-    ctx.beginPath();
-    ctx.moveTo(-bodyLen*0.6,0);
-    ctx.lineTo(-bodyLen*0.6-tail,-tail*0.35);
-    ctx.lineTo(-bodyLen*0.6-tail*0.82,0);
-    ctx.lineTo(-bodyLen*0.6-tail,tail*0.35);
-    ctx.closePath();
-    ctx.fill();
-
-    // dorsal fin
-    ctx.globalAlpha*=0.75;
-    ctx.beginPath();
-    ctx.moveTo(-bodyLen*0.05,-bodyH*0.05);
-    ctx.lineTo(bodyLen*0.1,-bodyH*0.95);
-    ctx.lineTo(bodyLen*0.22,-bodyH*0.1);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.restore();
-  }
-
   var fishCount=18;
   var creatures=[];
-  for(var i=0;i<fishCount;i++) creatures.push(new SeaCreature('fish'));
-  creatures.push(new SeaCreature('shark'));
+  for(var i=0;i<fishCount;i++) creatures.push(new SeaCreature());
+
+  function clampPitch(angle,maxPitch){
+    var a=normAngle(angle);
+    // right-facing
+    if(Math.abs(a)<=Math.PI/2) return clamp(a,-maxPitch,maxPitch);
+    // left-facing (around ±PI)
+    var sign=a>0?1:-1;
+    var rel=normAngle(a-sign*Math.PI); // near 0
+    rel=clamp(rel,-maxPitch,maxPitch);
+    return rel+sign*Math.PI;
+  }
 
   function updateCreature(c,dt){
     // gentle current + wander
     var t=performance.now()*0.001;
-    c.turnPhase+=dt*(c.type==='shark'?1.2:1.8);
+    c.turnPhase+=dt*1.8;
     var wander=(Math.sin(t*0.7+c.turnPhase*0.2)+Math.sin(t*1.1+c.turnPhase*0.13))*0.12;
 
     // separation (simple)
@@ -753,27 +721,37 @@ footer p{font-family:var(--mono);font-size:.65rem;color:var(--dim);letter-spacin
       var dm=hypot(dxm,dym);
       if(dm>0){
         var pull=clamp(1-(dm/(Math.min(w,h)*0.55)),0,1);
-        var strength=(c.type==='shark'?0.22:0.35)*pull;
+        var strength=0.35*pull;
         ax+=(dxm/dm)*strength;
         ay+=(dym/dm)*strength;
       }
     }
 
     // combine steering
-    ax+=sx*(c.type==='shark'?0.15:0.24);
-    ay+=sy*(c.type==='shark'?0.15:0.24);
+    ax+=sx*0.24;
+    ay+=sy*0.24;
 
-    // bias to keep under wave line
-    if(c.y<h*topFrac+18) ay+=0.35;
-    if(c.y>h-18) ay-=0.25;
+    // boundary steering: start turning BEFORE limits (no "bounce")
+    var yMin=h*topFrac+10;
+    var yMax=h-10;
+    var margin=Math.max(28,Math.min(60,(yMax-yMin)*0.18));
+    if(c.y<yMin+margin){
+      var k=(1-((c.y-yMin)/margin));
+      ay+=0.55*k*k;
+    }else if(c.y>yMax-margin){
+      var k2=(1-((yMax-c.y)/margin));
+      ay-=0.55*k2*k2;
+    }
 
     // smooth heading changes
     var target=Math.atan2(c.vy+ay,c.vx+ax);
     var da=normAngle(target-c.heading);
-    c.heading+=da*dt*(c.type==='shark'?0.7:1.05) + wander*dt;
+    c.heading+=da*dt*1.05 + wander*dt;
+    // limit inclination to ±45 degrees (relative to horizontal direction)
+    c.heading=clampPitch(c.heading,Math.PI/4);
 
     // velocity from heading + subtle vertical drift
-    var sp=c.speed*(c.type==='shark'?0.95:1.0);
+    var sp=c.speed;
     c.vx=lerp(c.vx,Math.cos(c.heading)*sp,dt*0.9);
     c.vy=lerp(c.vy,Math.sin(c.heading)*sp,dt*0.9);
 
@@ -785,8 +763,8 @@ footer p{font-family:var(--mono);font-size:.65rem;color:var(--dim);letter-spacin
     if(c.x<-60) c.x=w+60;
     if(c.x>w+60) c.x=-60;
 
-    // clamp vertically to region
-    if(!inBoundsY(c.y)) c.y=clamp(c.y,h*topFrac+10,h-10);
+    // safety clamp (should almost never trigger due to boundary steering)
+    if(!inBoundsY(c.y)) c.y=clamp(c.y,yMin,yMax);
   }
 
   function drawLight(){
@@ -821,10 +799,7 @@ footer p{font-family:var(--mono);font-size:.65rem;color:var(--dim);letter-spacin
     drawLight();
 
     for(var i=0;i<creatures.length;i++) updateCreature(creatures[i],dt);
-    for(var j=0;j<creatures.length;j++){
-      var c=creatures[j];
-      if(c.type==='shark') drawShark(c); else drawFish(c);
-    }
+    for(var j=0;j<creatures.length;j++) drawFish(creatures[j]);
 
     ctx.restore();
     requestAnimationFrame(frame);
