@@ -37,6 +37,7 @@ nav{position:fixed;top:0;left:0;right:0;z-index:200;display:flex;align-items:cen
 /* HERO */
 #hero{position:relative;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;overflow:hidden;padding:5rem 2rem 4rem}
 #waveCanvas{position:absolute;inset:0;width:100%;height:100%;opacity:.55}
+#seaLifeCanvas{position:absolute;inset:0;width:100%;height:100%;opacity:.9;pointer-events:none}
 .hero-content{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;animation:fadeUp .9s ease both}
 .hero-tag{font-family:var(--mono);font-size:.72rem;color:var(--accent);letter-spacing:.2em;text-transform:uppercase;margin-bottom:1.2rem;opacity:.85}
 .hero-name{font-family:var(--serif);font-size:clamp(3rem,8vw,6.5rem);font-weight:300;color:var(--head);line-height:1.05}
@@ -149,6 +150,7 @@ footer p{font-family:var(--mono);font-size:.65rem;color:var(--dim);letter-spacin
 
 <section id="hero">
   <canvas id="waveCanvas"></canvas>
+  <canvas id="seaLifeCanvas" aria-hidden="true"></canvas>
   <div class="hero-content">
     <div class="hero-tag">Marine Pollution Modeler &middot; CMCC &middot; Lecce, Italy</div>
     <h1 class="hero-name">Santiago Bravo</h1>
@@ -582,6 +584,262 @@ footer p{font-family:var(--mono);font-size:.65rem;color:var(--dim);letter-spacin
     requestAnimationFrame(draw);
   }
   draw();
+})();
+
+(function(){
+  var hero=document.getElementById('hero');
+  var canvas=document.getElementById('seaLifeCanvas');
+  if(!hero||!canvas) return;
+
+  var ctx=canvas.getContext('2d',{alpha:true});
+  var w=0,h=0,dpr=1,lastTs=0;
+
+  var canHover=window.matchMedia && window.matchMedia('(hover:hover) and (pointer:fine)').matches;
+  var mouse={x:0,y:0,active:false};
+  var topFrac=0.42; // fish/shark stay under the "wave zone"
+
+  function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+  function rand(a,b){return a+Math.random()*(b-a);}
+  function lerp(a,b,t){return a+(b-a)*t;}
+  function hypot(x,y){return Math.sqrt(x*x+y*y);}
+  function normAngle(a){while(a<-Math.PI)a+=Math.PI*2;while(a>Math.PI)a-=Math.PI*2;return a;}
+
+  function resize(){
+    dpr=Math.max(1,Math.min(2,window.devicePixelRatio||1));
+    w=canvas.offsetWidth|0;h=canvas.offsetHeight|0;
+    canvas.width=Math.max(1,(w*dpr)|0);
+    canvas.height=Math.max(1,(h*dpr)|0);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  window.addEventListener('resize',resize,{passive:true});
+  resize();
+
+  function inBoundsY(y){return y>=h*topFrac && y<=h-8;}
+
+  function SeaCreature(type){
+    this.type=type; // 'fish' | 'shark'
+    this.x=rand(0,w);
+    this.y=rand(h*topFrac+10,h-10);
+    this.vx=rand(-.6,.6);
+    this.vy=rand(-.25,.25);
+    this.heading=rand(-Math.PI,Math.PI);
+    this.turnPhase=rand(0,Math.PI*2);
+    this.speed=type==='shark'?rand(.35,.55):rand(.55,.95);
+    this.size=type==='shark'?rand(22,34):rand(8,14);
+    this.wiggle=type==='shark'?rand(.06,.12):rand(.12,.22);
+    this.sepRadius=type==='shark'?this.size*1.2:this.size*1.8;
+    this.opacity=type==='shark'?rand(.08,.14):rand(.07,.12);
+    this.hueMix=rand(0,1);
+  }
+
+  function colorFor(c){
+    // blend between accent and accent2, but keep it subtle/transparent
+    var a=[78,201,184],b=[42,138,124];
+    var r=(a[0]*(1-c.hueMix)+b[0]*c.hueMix)|0;
+    var g=(a[1]*(1-c.hueMix)+b[1]*c.hueMix)|0;
+    var b2=(a[2]*(1-c.hueMix)+b[2]*c.hueMix)|0;
+    return 'rgba('+r+','+g+','+b2+','+c.opacity+')';
+  }
+
+  function drawFish(c){
+    ctx.save();
+    ctx.translate(c.x,c.y);
+    ctx.rotate(c.heading);
+    ctx.globalCompositeOperation='lighter';
+    ctx.fillStyle=colorFor(c);
+
+    var s=c.size;
+    var bodyLen=s*1.9;
+    var bodyH=s*0.75;
+    var tail=s*0.65;
+    var wig=Math.sin(c.turnPhase)*s*0.12;
+
+    ctx.beginPath();
+    ctx.moveTo(-bodyLen*0.55,0);
+    ctx.quadraticCurveTo(-bodyLen*0.15,-bodyH+wig,bodyLen*0.35,0);
+    ctx.quadraticCurveTo(-bodyLen*0.15,bodyH+wig,-bodyLen*0.55,0);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(-bodyLen*0.55,0);
+    ctx.lineTo(-bodyLen*0.55-tail,-tail*0.55);
+    ctx.lineTo(-bodyLen*0.55-tail,tail*0.55);
+    ctx.closePath();
+    ctx.fill();
+
+    // faint dorsal fin
+    ctx.globalAlpha*=0.7;
+    ctx.beginPath();
+    ctx.moveTo(-bodyLen*0.05,-bodyH*0.25);
+    ctx.lineTo(bodyLen*0.05,-bodyH*0.85);
+    ctx.lineTo(bodyLen*0.14,-bodyH*0.12);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawShark(c){
+    ctx.save();
+    ctx.translate(c.x,c.y);
+    ctx.rotate(c.heading);
+    ctx.globalCompositeOperation='lighter';
+    ctx.fillStyle=colorFor(c);
+
+    var s=c.size;
+    var bodyLen=s*2.4;
+    var bodyH=s*0.7;
+    var tail=s*0.95;
+    var wig=Math.sin(c.turnPhase)*s*0.07;
+
+    ctx.beginPath();
+    ctx.moveTo(-bodyLen*0.6,0);
+    ctx.quadraticCurveTo(-bodyLen*0.1,-bodyH+wig,bodyLen*0.5,0);
+    ctx.quadraticCurveTo(-bodyLen*0.1,bodyH+wig,-bodyLen*0.6,0);
+    ctx.closePath();
+    ctx.fill();
+
+    // tail
+    ctx.beginPath();
+    ctx.moveTo(-bodyLen*0.6,0);
+    ctx.lineTo(-bodyLen*0.6-tail,-tail*0.35);
+    ctx.lineTo(-bodyLen*0.6-tail*0.82,0);
+    ctx.lineTo(-bodyLen*0.6-tail,tail*0.35);
+    ctx.closePath();
+    ctx.fill();
+
+    // dorsal fin
+    ctx.globalAlpha*=0.75;
+    ctx.beginPath();
+    ctx.moveTo(-bodyLen*0.05,-bodyH*0.05);
+    ctx.lineTo(bodyLen*0.1,-bodyH*0.95);
+    ctx.lineTo(bodyLen*0.22,-bodyH*0.1);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  var fishCount=18;
+  var creatures=[];
+  for(var i=0;i<fishCount;i++) creatures.push(new SeaCreature('fish'));
+  creatures.push(new SeaCreature('shark'));
+
+  function updateCreature(c,dt){
+    // gentle current + wander
+    var t=performance.now()*0.001;
+    c.turnPhase+=dt*(c.type==='shark'?1.2:1.8);
+    var wander=(Math.sin(t*0.7+c.turnPhase*0.2)+Math.sin(t*1.1+c.turnPhase*0.13))*0.12;
+
+    // separation (simple)
+    var sx=0,sy=0,sc=0;
+    for(var i=0;i<creatures.length;i++){
+      var o=creatures[i];
+      if(o===c) continue;
+      var dx=c.x-o.x,dy=c.y-o.y;
+      var d=hypot(dx,dy);
+      if(d>0 && d<c.sepRadius){
+        var k=(1-(d/c.sepRadius));
+        sx+=dx/d*k;sy+=dy/d*k;sc++;
+      }
+    }
+    if(sc){sx/=sc;sy/=sc;}
+
+    // light attraction (only when mouse is over waves region on desktop)
+    var ax=0,ay=0;
+    if(mouse.active && canHover){
+      var dxm=mouse.x-c.x,dym=mouse.y-c.y;
+      var dm=hypot(dxm,dym);
+      if(dm>0){
+        var pull=clamp(1-(dm/(Math.min(w,h)*0.55)),0,1);
+        var strength=(c.type==='shark'?0.22:0.35)*pull;
+        ax+=(dxm/dm)*strength;
+        ay+=(dym/dm)*strength;
+      }
+    }
+
+    // combine steering
+    ax+=sx*(c.type==='shark'?0.15:0.24);
+    ay+=sy*(c.type==='shark'?0.15:0.24);
+
+    // bias to keep under wave line
+    if(c.y<h*topFrac+18) ay+=0.35;
+    if(c.y>h-18) ay-=0.25;
+
+    // smooth heading changes
+    var target=Math.atan2(c.vy+ay,c.vx+ax);
+    var da=normAngle(target-c.heading);
+    c.heading+=da*dt*(c.type==='shark'?0.7:1.05) + wander*dt;
+
+    // velocity from heading + subtle vertical drift
+    var sp=c.speed*(c.type==='shark'?0.95:1.0);
+    c.vx=lerp(c.vx,Math.cos(c.heading)*sp,dt*0.9);
+    c.vy=lerp(c.vy,Math.sin(c.heading)*sp,dt*0.9);
+
+    // advance
+    c.x+=c.vx*dt*60;
+    c.y+=c.vy*dt*60 + Math.sin(c.turnPhase*1.7)*c.wiggle*dt*60;
+
+    // wrap horizontally
+    if(c.x<-60) c.x=w+60;
+    if(c.x>w+60) c.x=-60;
+
+    // clamp vertically to region
+    if(!inBoundsY(c.y)) c.y=clamp(c.y,h*topFrac+10,h-10);
+  }
+
+  function drawLight(){
+    if(!mouse.active || !canHover) return;
+    ctx.save();
+    ctx.globalCompositeOperation='screen';
+    var r=Math.min(w,h)*0.22;
+    var g=ctx.createRadialGradient(mouse.x,mouse.y,0,mouse.x,mouse.y,r);
+    g.addColorStop(0,'rgba(78,201,184,0.10)');
+    g.addColorStop(0.5,'rgba(78,201,184,0.04)');
+    g.addColorStop(1,'rgba(78,201,184,0)');
+    ctx.fillStyle=g;
+    ctx.beginPath();
+    ctx.arc(mouse.x,mouse.y,r,0,Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function frame(ts){
+    if(!w||!h){requestAnimationFrame(frame);return;}
+    var dt=Math.min(0.033,Math.max(0.008,(ts-lastTs)/1000||0.016));
+    lastTs=ts;
+
+    ctx.clearRect(0,0,w,h);
+
+    // clip everything to the under-wave region
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0,h*topFrac,w,h*(1-topFrac));
+    ctx.clip();
+
+    drawLight();
+
+    for(var i=0;i<creatures.length;i++) updateCreature(creatures[i],dt);
+    for(var j=0;j<creatures.length;j++){
+      var c=creatures[j];
+      if(c.type==='shark') drawShark(c); else drawFish(c);
+    }
+
+    ctx.restore();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  if(canHover){
+    hero.addEventListener('pointermove',function(e){
+      var r=canvas.getBoundingClientRect();
+      mouse.x=clamp(e.clientX-r.left,0,w);
+      mouse.y=clamp(e.clientY-r.top,0,h);
+      mouse.active=(mouse.y>=h*topFrac);
+    },{passive:true});
+    hero.addEventListener('pointerleave',function(){mouse.active=false;},{passive:true});
+  }
 })();
 
 (function(){
