@@ -596,7 +596,7 @@ footer p{font-family:var(--mono);font-size:.65rem;color:var(--dim);letter-spacin
 
   var canHover=window.matchMedia && window.matchMedia('(hover:hover) and (pointer:fine)').matches;
   var mouse={x:0,y:0,active:false};
-  var topFrac=0.42; // fish/shark stay under the "wave zone"
+  var topFrac=0.62; // fish swim below the first two waves
 
   function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
   function rand(a,b){return a+Math.random()*(b-a);}
@@ -614,66 +614,133 @@ footer p{font-family:var(--mono);font-size:.65rem;color:var(--dim);letter-spacin
   window.addEventListener('resize',resize,{passive:true});
   resize();
 
-  function inBoundsY(y){return y>=h*topFrac && y<=h-8;}
-
   function SeaCreature(){
     this.x=rand(0,w);
-    this.y=rand(h*topFrac+10,h-10);
+    this.y=rand(h*topFrac+12,h-12);
     this.vx=rand(-.6,.6);
-    this.vy=rand(-.25,.25);
-    this.heading=rand(-Math.PI,Math.PI);
+    this.vy=rand(-.2,.2);
+    this.heading=rand(-Math.PI/4,Math.PI/4);
+    if(Math.random()<0.5) this.heading=normAngle(this.heading+Math.PI);
     this.turnPhase=rand(0,Math.PI*2);
+    this.swimPhase=rand(0,Math.PI*2);
+    this.swimRate=rand(5.5,7.5);
     this.speed=rand(.55,.95);
-    this.size=rand(8,14);
-    this.wiggle=rand(.12,.22);
-    this.sepRadius=this.size*1.8;
-    this.opacity=rand(.07,.12);
+    this.size=rand(7,12);
+    this.wiggle=rand(.10,.16);
+    this.sepRadius=this.size*1.9;
+    this.opacity=rand(.10,.18);
     this.hueMix=rand(0,1);
   }
 
-  function colorFor(c){
-    // blend between accent and accent2, but keep it subtle/transparent
+  function rgbFor(c){
     var a=[78,201,184],b=[42,138,124];
     var r=(a[0]*(1-c.hueMix)+b[0]*c.hueMix)|0;
     var g=(a[1]*(1-c.hueMix)+b[1]*c.hueMix)|0;
     var b2=(a[2]*(1-c.hueMix)+b[2]*c.hueMix)|0;
-    return 'rgba('+r+','+g+','+b2+','+c.opacity+')';
+    return r+','+g+','+b2;
   }
 
   function drawFish(c){
     ctx.save();
     ctx.translate(c.x,c.y);
-    ctx.rotate(c.heading);
+
+    var na=normAngle(c.heading);
+    var leftFacing=Math.abs(na)>Math.PI/2;
+    if(leftFacing){
+      ctx.rotate(normAngle(na-Math.PI));
+      ctx.scale(-1,1);
+    }else{
+      ctx.rotate(na);
+    }
+
     ctx.globalCompositeOperation='lighter';
-    ctx.fillStyle=colorFor(c);
-
     var s=c.size;
-    var bodyLen=s*1.9;
-    var bodyH=s*0.75;
-    var tail=s*0.65;
-    var wig=Math.sin(c.turnPhase)*s*0.12;
+    var bodyLen=s*2.2;
+    var bodyH=s*0.5;
+    var rgb=rgbFor(c);
+
+    // sample body points: u=0 head (+x), u=1 tail (-x)
+    var N=12;
+    var top=[],bot=[],mid=[];
+    for(var i=0;i<=N;i++){
+      var u=i/N;
+      var lx=bodyLen*0.5-u*bodyLen;
+      var wp;
+      if(u<0.18){
+        var v=u/0.18;
+        wp=Math.sqrt(Math.max(0,1-(1-v)*(1-v)))*0.95;
+      }else{
+        var v2=(u-0.18)/0.82;
+        wp=(1-v2)*(1-v2*0.6)*0.95;
+      }
+      var halfW=bodyH*wp;
+      var ampU=Math.pow(u,1.7)*s*0.30;
+      var wave=Math.sin(c.swimPhase+u*Math.PI*1.6)*ampU;
+      top.push([lx,wave-halfW]);
+      bot.push([lx,wave+halfW]);
+      mid.push([lx,wave]);
+    }
+
+    // body fill with vertical gradient (hint of belly highlight)
+    var grad=ctx.createLinearGradient(0,-bodyH,0,bodyH);
+    grad.addColorStop(0,'rgba('+rgb+','+(c.opacity*0.9).toFixed(3)+')');
+    grad.addColorStop(0.55,'rgba('+rgb+','+(c.opacity*1.4).toFixed(3)+')');
+    grad.addColorStop(1,'rgba('+rgb+','+(c.opacity*0.7).toFixed(3)+')');
+    ctx.fillStyle=grad;
 
     ctx.beginPath();
-    ctx.moveTo(-bodyLen*0.55,0);
-    ctx.quadraticCurveTo(-bodyLen*0.15,-bodyH+wig,bodyLen*0.35,0);
-    ctx.quadraticCurveTo(-bodyLen*0.15,bodyH+wig,-bodyLen*0.55,0);
+    ctx.moveTo(top[0][0],top[0][1]);
+    for(var i2=1;i2<=N;i2++) ctx.lineTo(top[i2][0],top[i2][1]);
+    for(var j=N;j>=0;j--) ctx.lineTo(bot[j][0],bot[j][1]);
     ctx.closePath();
     ctx.fill();
 
+    // caudal (tail) fin — oriented along last body segment, flicks with wave
+    var tx=mid[N][0],ty=mid[N][1];
+    var px=mid[N-1][0],py=mid[N-1][1];
+    var ddx=tx-px,ddy=ty-py;
+    var dl=Math.sqrt(ddx*ddx+ddy*ddy)||1;
+    var dxN=ddx/dl,dyN=ddy/dl;
+    var perpX=-dyN,perpY=dxN;
+    var finLen=s*0.95;
+    var finH=s*0.62;
+    var notchX=tx+dxN*finLen*0.45;
+    var notchY=ty+dyN*finLen*0.45;
+    var tipUpX=tx+dxN*finLen+perpX*finH;
+    var tipUpY=ty+dyN*finLen+perpY*finH;
+    var tipDnX=tx+dxN*finLen-perpX*finH;
+    var tipDnY=ty+dyN*finLen-perpY*finH;
+    ctx.fillStyle='rgba('+rgb+','+(c.opacity*0.85).toFixed(3)+')';
     ctx.beginPath();
-    ctx.moveTo(-bodyLen*0.55,0);
-    ctx.lineTo(-bodyLen*0.55-tail,-tail*0.55);
-    ctx.lineTo(-bodyLen*0.55-tail,tail*0.55);
+    ctx.moveTo(tx,ty);
+    ctx.quadraticCurveTo(tx+dxN*finLen*0.3+perpX*finH*0.3,ty+dyN*finLen*0.3+perpY*finH*0.3,tipUpX,tipUpY);
+    ctx.lineTo(notchX,notchY);
+    ctx.lineTo(tipDnX,tipDnY);
+    ctx.quadraticCurveTo(tx+dxN*finLen*0.3-perpX*finH*0.3,ty+dyN*finLen*0.3-perpY*finH*0.3,tx,ty);
     ctx.closePath();
     ctx.fill();
 
-    // faint dorsal fin
-    ctx.globalAlpha*=0.7;
+    // dorsal fin — small arc on top, anchored at front-third of body
+    var di=Math.floor(N*0.32);
+    var dxA=top[di][0],dyA=top[di][1];
+    var dB=top[di+2]||top[di];
+    var dxB=dB[0],dyB=dB[1];
+    var dMidX=(dxA+dxB)*0.5;
+    var dMidY=(dyA+dyB)*0.5;
+    ctx.fillStyle='rgba('+rgb+','+(c.opacity*0.7).toFixed(3)+')';
     ctx.beginPath();
-    ctx.moveTo(-bodyLen*0.05,-bodyH*0.25);
-    ctx.lineTo(bodyLen*0.05,-bodyH*0.85);
-    ctx.lineTo(bodyLen*0.14,-bodyH*0.12);
+    ctx.moveTo(dxA,dyA);
+    ctx.quadraticCurveTo(dMidX,dMidY-bodyH*0.95,dxB,dyB);
     ctx.closePath();
+    ctx.fill();
+
+    // eye — small light dot near head
+    var eyeX=mid[1][0]-bodyLen*0.02;
+    var eyeY=mid[1][1]-bodyH*0.30;
+    ctx.globalCompositeOperation='source-over';
+    ctx.fillStyle='rgba(220,235,240,'+Math.min(0.55,c.opacity*3).toFixed(3)+')';
+    ctx.beginPath();
+    ctx.arc(eyeX,eyeY,Math.max(0.7,s*0.085),0,Math.PI*2);
     ctx.fill();
 
     ctx.restore();
@@ -695,12 +762,12 @@ footer p{font-family:var(--mono);font-size:.65rem;color:var(--dim);letter-spacin
   }
 
   function updateCreature(c,dt){
-    // gentle current + wander
     var t=performance.now()*0.001;
-    c.turnPhase+=dt*1.8;
-    var wander=(Math.sin(t*0.7+c.turnPhase*0.2)+Math.sin(t*1.1+c.turnPhase*0.13))*0.12;
+    c.turnPhase+=dt*1.6;
+    c.swimPhase+=dt*c.swimRate;
+    var wander=(Math.sin(t*0.7+c.turnPhase*0.2)+Math.sin(t*1.1+c.turnPhase*0.13))*0.10;
 
-    // separation (simple)
+    // separation
     var sx=0,sy=0,sc=0;
     for(var i=0;i<creatures.length;i++){
       var o=creatures[i];
@@ -714,7 +781,7 @@ footer p{font-family:var(--mono);font-size:.65rem;color:var(--dim);letter-spacin
     }
     if(sc){sx/=sc;sy/=sc;}
 
-    // light attraction (only when mouse is over waves region on desktop)
+    // light attraction (desktop only)
     var ax=0,ay=0;
     if(mouse.active && canHover){
       var dxm=mouse.x-c.x,dym=mouse.y-c.y;
@@ -726,45 +793,51 @@ footer p{font-family:var(--mono);font-size:.65rem;color:var(--dim);letter-spacin
         ay+=(dym/dm)*strength;
       }
     }
-
-    // combine steering
     ax+=sx*0.24;
     ay+=sy*0.24;
 
-    // boundary steering: start turning BEFORE limits (no "bounce")
-    var yMin=h*topFrac+10;
-    var yMax=h-10;
-    var margin=Math.max(28,Math.min(60,(yMax-yMin)*0.18));
+    // boundary steering for visual heading
+    var yMin=h*topFrac+12;
+    var yMax=h-12;
+    var margin=Math.max(40,Math.min(90,(yMax-yMin)*0.28));
+    var wiggleScale=1;
+    var nearTopK=0,nearBotK=0;
     if(c.y<yMin+margin){
-      var k=(1-((c.y-yMin)/margin));
-      ay+=0.55*k*k;
+      nearTopK=clamp(1-(c.y-yMin)/margin,0,1);
+      ay+=0.7*nearTopK*nearTopK;
+      wiggleScale=1-nearTopK*0.9;
     }else if(c.y>yMax-margin){
-      var k2=(1-((yMax-c.y)/margin));
-      ay-=0.55*k2*k2;
+      nearBotK=clamp(1-(yMax-c.y)/margin,0,1);
+      ay-=0.7*nearBotK*nearBotK;
+      wiggleScale=1-nearBotK*0.9;
     }
 
-    // smooth heading changes
+    // smooth heading update (visual orientation only, ±45° pitch clamp)
     var target=Math.atan2(c.vy+ay,c.vx+ax);
     var da=normAngle(target-c.heading);
-    c.heading+=da*dt*1.05 + wander*dt;
-    // limit inclination to ±45 degrees (relative to horizontal direction)
+    c.heading+=da*dt*1.05+wander*dt;
     c.heading=clampPitch(c.heading,Math.PI/4);
 
-    // velocity from heading + subtle vertical drift
     var sp=c.speed;
     c.vx=lerp(c.vx,Math.cos(c.heading)*sp,dt*0.9);
     c.vy=lerp(c.vy,Math.sin(c.heading)*sp,dt*0.9);
 
-    // advance
-    c.x+=c.vx*dt*60;
-    c.y+=c.vy*dt*60 + Math.sin(c.turnPhase*1.7)*c.wiggle*dt*60;
+    // boundary recovery: pull vy directly away from edge, bypassing pitch clamp
+    if(nearTopK>0){
+      c.vy=lerp(c.vy,sp*0.95,nearTopK*nearTopK*0.22);
+    }else if(nearBotK>0){
+      c.vy=lerp(c.vy,-sp*0.95,nearBotK*nearBotK*0.22);
+    }
 
-    // wrap horizontally
+    c.x+=c.vx*dt*60;
+    c.y+=c.vy*dt*60+Math.sin(c.turnPhase*1.7)*c.wiggle*dt*60*wiggleScale;
+
     if(c.x<-60) c.x=w+60;
     if(c.x>w+60) c.x=-60;
 
-    // safety clamp (should almost never trigger due to boundary steering)
-    if(!inBoundsY(c.y)) c.y=clamp(c.y,yMin,yMax);
+    // safety clamp (should rarely trigger)
+    if(c.y<yMin) c.y=yMin;
+    if(c.y>yMax) c.y=yMax;
   }
 
   function drawLight(){
